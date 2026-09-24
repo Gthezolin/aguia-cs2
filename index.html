@@ -536,7 +536,21 @@
 
 <div class="banner" id="localBanner"><span>Modo local: sem conexão com o armazenamento do time — mudanças não serão salvas para todos.</span></div>
 
-<script>
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-app.js";
+import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot, getDocs } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js";
+
+var firebaseConfig = {
+  apiKey: "AIzaSyCi8QcT6WFzexr1_C1kfT41_1Eyoz_aBCs",
+  authDomain: "aguia-cs2.firebaseapp.com",
+  projectId: "aguia-cs2",
+  storageBucket: "aguia-cs2.firebasestorage.app",
+  messagingSenderId: "237127327241",
+  appId: "1:237127327241:web:528de96d9a7aadb93fa2d8"
+};
+var fbApp = null;
+try{ fbApp = initializeApp(firebaseConfig); }catch(e){ fbApp = null; }
+
 (function(){
   "use strict";
 
@@ -594,25 +608,16 @@
   DEFAULT_PLAYER_NAMES.forEach(function(n){ state.players[slug(n)] = defaultPlayer(n); });
   MAP_NAMES.forEach(function(n,i){ state.maps[slug(n)] = defaultMap(n,i); });
 
-  var db = null, userCap = null, canEdit = true, usingDb = false;
+  var dbFs = null, canEdit = true, usingDb = false;
 
-  /* ================= inicialização de capacidades ================= */
-  async function initCaps(){
+  /* ================= inicialização do banco (Firebase) ================= */
+  function initCaps(){
     try{
-      if(window.claude && window.claude.use){
-        db = await window.claude.use("db");
-        userCap = await window.claude.use("user");
-      }
-    }catch(e){ db = null; userCap = null; }
+      dbFs = getFirestore(fbApp);
+      usingDb = true;
+    }catch(e){ dbFs = null; usingDb = false; }
 
-    try{
-      if(userCap){
-        var canWrite = await userCap.can("data.write");
-        canEdit = (canWrite === false) ? false : true;
-      } else { canEdit = true; }
-    }catch(e){ canEdit = true; }
-
-    usingDb = !!db;
+    canEdit = true; /* acesso já é protegido pela tela de senha */
     if(!usingDb){
       document.getElementById("localBanner").classList.add("show");
     }
@@ -630,7 +635,7 @@
 
   function subscribe(col, target, cb, isMatches){
     try{
-      db.collection(col).onSnapshot(function(snap){
+      onSnapshot(collection(dbFs, col), function(snap){
         var docs = snap.docs || snap || [];
         if(!isMatches){
           docs.forEach(function(d){
@@ -645,7 +650,7 @@
           });
         }
         cb();
-      });
+      }, function(){ usingDb = false; document.getElementById("localBanner").classList.add("show"); renderAll(); });
     }catch(e){ cb(); }
   }
 
@@ -654,19 +659,19 @@
     if(seeded || !canEdit) return;
     seeded = true;
     try{
-      db.collection("players").get().then(function(snap){
+      getDocs(collection(dbFs, "players")).then(function(snap){
         var existing = (snap.docs||[]).map(function(d){ return d.id; });
         if(existing.length === 0){
           DEFAULT_PLAYER_NAMES.forEach(function(n){
-            db.doc("players/"+slug(n)).set(defaultPlayer(n)).catch(function(){});
+            setDoc(doc(dbFs, "players/"+slug(n)), defaultPlayer(n)).catch(function(){});
           });
         }
       }).catch(function(){});
-      db.collection("maps").get().then(function(snap){
+      getDocs(collection(dbFs, "maps")).then(function(snap){
         var existing = (snap.docs||[]).map(function(d){ return d.id; });
         MAP_NAMES.forEach(function(n,i){
           var id = slug(n);
-          if(existing.indexOf(id) === -1){ db.doc("maps/"+id).set(defaultMap(n,i)).catch(function(){}); }
+          if(existing.indexOf(id) === -1){ setDoc(doc(dbFs, "maps/"+id), defaultMap(n,i)).catch(function(){}); }
         });
       }).catch(function(){});
     }catch(e){}
@@ -1089,7 +1094,7 @@
     var merged = Object.assign({}, state.players[id]||{}, data);
     state.players[id] = merged;
     if(usingDb){
-      try{ db.doc("players/"+id).set(merged).catch(function(){ downgradeReadOnly(); showBanner("Não foi possível salvar — sem permissão de edição."); }); }
+      try{ setDoc(doc(dbFs, "players/"+id), merged).catch(function(){ showBanner("Não foi possível salvar — tenta de novo."); }); }
       catch(e){ showBanner("Não foi possível salvar."); }
     }
     renderRoster(); renderPerf();
@@ -1103,7 +1108,7 @@
     var data = defaultPlayer(name);
     state.players[id] = data;
     if(usingDb){
-      try{ db.doc("players/"+id).set(data).catch(function(){ downgradeReadOnly(); showBanner("Não foi possível salvar — sem permissão de edição."); }); }
+      try{ setDoc(doc(dbFs, "players/"+id), data).catch(function(){ showBanner("Não foi possível salvar — tenta de novo."); }); }
       catch(e){}
     }
     renderRoster(); renderPerf();
@@ -1112,7 +1117,7 @@
   function removePlayer(id){
     if(!canEdit) return;
     delete state.players[id];
-    if(usingDb){ try{ db.doc("players/"+id).delete().catch(function(){ downgradeReadOnly(); showBanner("Não foi possível remover — sem permissão de edição."); }); }catch(e){} }
+    if(usingDb){ try{ deleteDoc(doc(dbFs, "players/"+id)).catch(function(){ showBanner("Não foi possível remover — tenta de novo."); }); }catch(e){} }
     renderRoster(); renderPerf();
   }
 
@@ -1148,7 +1153,7 @@
     var merged = Object.assign({}, state.maps[editingMapId]||{}, data);
     state.maps[editingMapId] = merged;
     if(usingDb){
-      try{ db.doc("maps/"+editingMapId).set(merged).catch(function(){ downgradeReadOnly(); showBanner("Não foi possível salvar — sem permissão de edição."); }); }
+      try{ setDoc(doc(dbFs, "maps/"+editingMapId), merged).catch(function(){ showBanner("Não foi possível salvar — tenta de novo."); }); }
       catch(e){}
     }
     renderMaps(); renderPerf();
@@ -1175,7 +1180,7 @@
     };
     state.matches[id] = data;
     if(usingDb){
-      try{ db.doc("matches/"+id).set(data).catch(function(){ downgradeReadOnly(); showBanner("Não foi possível salvar — sem permissão de edição."); }); }
+      try{ setDoc(doc(dbFs, "matches/"+id), data).catch(function(){ showBanner("Não foi possível salvar — tenta de novo."); }); }
       catch(e){}
     }
     renderMatches(); renderPerf();
@@ -1185,7 +1190,7 @@
   function deleteMatch(id){
     if(!canEdit) return;
     delete state.matches[id];
-    if(usingDb){ try{ db.doc("matches/"+id).delete().catch(function(){}); }catch(e){} }
+    if(usingDb){ try{ deleteDoc(doc(dbFs, "matches/"+id)).catch(function(){}); }catch(e){} }
     renderMatches(); renderPerf();
   }
 
